@@ -1,0 +1,15 @@
+[package]
+name = "server"
+version = "0.1.0"
+authors = ["vaiklol <samokatanet@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+websocket = "0.24.0"
+tokio = { version = "0.2.9", features = ["full"] }
+tokio-util = { version = "*", features = ["full"] }
+futures = "0.3.1"
+rand = "0.7.3"
+get_if_addrs = "0.5.3"
