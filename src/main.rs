@@ -9,7 +9,7 @@ use websocket::client::sync::Client;
 use websocket::websocket_base::stream::sync::TcpStream;
 use websocket::ws::dataframe::DataFrame;
 use websocket::Message;
-use log::debug;
+use log::{info, debug};
 
 const LOCAL_HOST: &str = "0.0.0.0";
 
@@ -46,7 +46,7 @@ impl Room {
                             let recv = client.ws_client.recv_message();
                             match recv {
                                 Ok(msg) if msg.is_data() => {
-                                    debug!("Receive msg from client: {:?}, body: {:?}", client.ip, msg);
+                                    info!("Receive msg from client: {:?}, body: {:?}", client.ip, msg);
                                     tx.send(Message::from(msg)).unwrap();
                                 }
                                 _ => break,
@@ -128,7 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     let raw_clients: Arc<Mutex<Vec<RoomClient>>> = Arc::new(Mutex::new(Vec::<RoomClient>::new()));
-    debug!("Connected on: {}", init_server_port(port));
+    info!("Connected on: {}", init_server_port(port));
     let server_queue = raw_clients.clone();
     let server_rooms = rooms.clone();
 
@@ -163,7 +163,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let connected_client = client.unwrap();
             let client_ip = get_client_ip(&connected_client.peer_addr());
-            debug!("Connected new client: {:?}", client_ip);
+            info!("Connected new client: {:?}", client_ip);
             server_queue.lock().unwrap().push(RoomClient {
                 ip: client_ip,
                 ws_client: connected_client,
@@ -185,10 +185,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     usize::from_str(room_id).unwrap_or(0)
                                 })
                                 .unwrap_or(0);
-                            debug!("Client {:?} want to connect in the room with id {}", raw_client.ip, id);
+                            info!("Client {:?} want to connect in the room with id {}", raw_client.ip, id);
                             let room = rooms.iter_mut().find(|r| r.lock().unwrap().id == id);
                             if room.is_some() {
-                                debug!("Client {:?} connected to the room {}", raw_client.ip, id);
+                                info!("Client {:?} connected to the room {}", raw_client.ip, id);
                                 room.unwrap()
                                     .lock()
                                     .unwrap()
