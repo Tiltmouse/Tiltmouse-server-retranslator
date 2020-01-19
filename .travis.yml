@@ -9,11 +9,6 @@ jobs:
   fast_finish: true
   
 cache: cargo
-script:
-  # do some more stuff here
-  - .travis/change.sh
-before_deploy:
-  - .travis/push.sh
 deploy:
   provider: releases
   file_glob: true
