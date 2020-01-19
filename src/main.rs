@@ -9,6 +9,7 @@ use websocket::client::sync::Client;
 use websocket::websocket_base::stream::sync::TcpStream;
 use websocket::ws::dataframe::DataFrame;
 use websocket::Message;
+use log::debug;
 
 const LOCAL_HOST: &str = "0.0.0.0";
 
@@ -45,6 +46,7 @@ impl Room {
                             let recv = client.ws_client.recv_message();
                             match recv {
                                 Ok(msg) if msg.is_data() => {
+                                    debug!("Receive msg from client: {:?}, body: {:?}", client.ip, msg);
                                     tx.send(Message::from(msg)).unwrap();
                                 }
                                 _ => break,
@@ -93,7 +95,7 @@ async fn send_my_ip_to_all(port: i32, port_broadcast: u16) {
         .connect(SocketAddr::from((addr.octets(), port_broadcast)))
         .await;
     let bytes = port.to_be_bytes();
-    println!(
+    debug!(
         "send {:?}:{:?}, broadcast port: {}",
         addr.octets(),
         port,
@@ -104,6 +106,7 @@ async fn send_my_ip_to_all(port: i32, port_broadcast: u16) {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::builder().format_timestamp_millis().init();
     let mut rng = rand::prelude::thread_rng();
     let mut port = 26199; //rng.gen_range(1i32, 65535i32);
     let rooms = Arc::new(Mutex::new(Vec::<Arc<Mutex<Room>>>::new()));
@@ -125,8 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     let raw_clients: Arc<Mutex<Vec<RoomClient>>> = Arc::new(Mutex::new(Vec::<RoomClient>::new()));
-    println!("Connected on: {}", init_server_port(port));
-
+    debug!("Connected on: {}", init_server_port(port));
     let server_queue = raw_clients.clone();
     let server_rooms = rooms.clone();
 
@@ -136,7 +138,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let client_upgrade = match server.accept() {
                 Ok(client) => client,
                 Err(err) => {
-                    eprint!("{}", err.error);
+                    eprintln!("{}", err.error);
                     continue;
                 }
             };
@@ -160,10 +162,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
             let connected_client = client.unwrap();
+            let client_ip = get_client_ip(&connected_client.peer_addr());
+            debug!("Connected new client: {:?}", client_ip);
             server_queue.lock().unwrap().push(RoomClient {
-                ip: get_client_ip(&connected_client.peer_addr()),
+                ip: client_ip,
                 ws_client: connected_client,
-            })
+            });
         }
     });
     let clients = tokio::task::spawn(async move {
@@ -181,8 +185,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     usize::from_str(room_id).unwrap_or(0)
                                 })
                                 .unwrap_or(0);
+                            debug!("Client {:?} want to connect in the room with id {}", raw_client.ip, id);
                             let room = rooms.iter_mut().find(|r| r.lock().unwrap().id == id);
                             if room.is_some() {
+                                debug!("Client {:?} connected to the room {}", raw_client.ip, id);
                                 room.unwrap()
                                     .lock()
                                     .unwrap()
