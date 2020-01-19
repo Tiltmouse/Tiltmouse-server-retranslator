@@ -1,18 +1,14 @@
-use websocket::Message;
-use websocket::ws::dataframe::DataFrame;
-use std::sync::{Mutex, Arc};
-use websocket::server::{WsServer, NoTlsAcceptor};
-use websocket::r#async::TcpListener;
+use get_if_addrs::{IfAddr, Interface};
 use rand::Rng;
-use websocket::client::sync::Client;
-use std::net::{IpAddr, SocketAddr, SocketAddrV4, UdpSocket};
-use websocket::websocket_base::stream::sync::TcpStream;
-use futures::{StreamExt, TryStreamExt};
+use std::net::SocketAddr;
 use std::str::FromStr;
-use get_if_addrs::{Interface, IfAddr};
-use tokio::time::{Duration, Instant};
-use futures::task::SpawnExt;
-use std::sync::mpsc::{channel, Sender, Receiver};
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, Mutex};
+use tokio::time::Duration;
+use websocket::client::sync::Client;
+use websocket::websocket_base::stream::sync::TcpStream;
+use websocket::ws::dataframe::DataFrame;
+use websocket::Message;
 
 const LOCAL_HOST: &str = "0.0.0.0";
 
@@ -51,13 +47,19 @@ impl Room {
                                 Ok(msg) if msg.is_data() => {
                                     tx.send(Message::from(msg)).unwrap();
                                 }
-                                _ => break
+                                _ => break,
                             };
                         }
                     });
                 });
                 while let Some(msg) = rx.recv().await {
-                    room.lock().unwrap().front.as_mut().unwrap().send_message(&msg).unwrap();
+                    room.lock()
+                        .unwrap()
+                        .front
+                        .as_mut()
+                        .unwrap()
+                        .send_message(&msg)
+                        .unwrap();
                 }
             }
         });
@@ -72,22 +74,31 @@ struct RoomClient {
 
 async fn send_my_ip_to_all(port: i32, port_broadcast: u16) {
     let ip: std::io::Result<Vec<Interface>> = get_if_addrs::get_if_addrs();
-    let mut bc_aip = ip.unwrap()
+    let mut bc_aip = ip
+        .unwrap()
         .iter()
-        .map(|e| {
-            match e.addr {
-                IfAddr::V4(ref e) => e.broadcast,
-                _ => None
-            }
-        }).filter(Option::is_some).collect::<Vec<_>>();
+        .map(|e| match e.addr {
+            IfAddr::V4(ref e) => e.broadcast,
+            _ => None,
+        })
+        .filter(Option::is_some)
+        .collect::<Vec<_>>();
     let addr = bc_aip.pop().unwrap().unwrap();
-    let mut socket: tokio::net::UdpSocket = tokio::net::UdpSocket::bind(
-        SocketAddr::from(([0, 0, 0, 0], 0))
-    ).await.unwrap();
+    let mut socket: tokio::net::UdpSocket =
+        tokio::net::UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0)))
+            .await
+            .unwrap();
     socket.set_broadcast(true);
-    socket.connect(SocketAddr::from((addr.octets(), port_broadcast))).await;
+    socket
+        .connect(SocketAddr::from((addr.octets(), port_broadcast)))
+        .await;
     let bytes = port.to_be_bytes();
-    println!("send {:?}:{:?}, broadcast port: {}", addr.octets(), port, port_broadcast);
+    println!(
+        "send {:?}:{:?}, broadcast port: {}",
+        addr.octets(),
+        port,
+        port_broadcast
+    );
     socket.send(&bytes).await.unwrap();
 }
 
@@ -123,16 +134,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let rng = &mut rand::prelude::thread_rng();
         loop {
             let client_upgrade = match server.accept() {
-                Ok(client) => {
-                    client
-                }
+                Ok(client) => client,
                 Err(err) => {
                     eprint!("{}", err.error);
                     continue;
                 }
             };
             if client_upgrade.origin().is_some() {
-                let (tx, rx) = channel::<RoomClient>();
                 let mut room_id = rng.gen_range(100usize, 300usize);
                 let mut room_guard = server_rooms.lock().unwrap();
                 let mut room = room_guard.iter().find(|e| e.lock().unwrap().id == room_id);
@@ -140,14 +148,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     room_id = rng.gen_range(100usize, 300usize);
                     room = room_guard.iter().find(|e| e.lock().unwrap().id == room_id);
                 }
-                let mut client = client_upgrade.accept();
+                let client = client_upgrade.accept();
                 if client.is_err() {
                     continue;
                 }
                 room_guard.push(Room::new(room_id, Some(client.unwrap())));
                 continue;
             }
-            let mut client = client_upgrade.accept();
+            let client = client_upgrade.accept();
             if client.is_err() {
                 continue;
             }
@@ -160,8 +168,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     let clients = tokio::task::spawn(async move {
         loop {
-            if let (Ok(mut clients), Ok(mut rooms))
-            = (raw_clients.try_lock(), rooms.lock()) {
+            if let (Ok(mut clients), Ok(mut rooms)) = (raw_clients.try_lock(), rooms.lock()) {
                 if rooms.is_empty() {
                     continue;
                 }
@@ -172,14 +179,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .map(|cmd| {
                                     let room_id = cmd.split("room").next().unwrap_or("0");
                                     usize::from_str(room_id).unwrap_or(0)
-                                }).unwrap_or(0);
-                            let room = rooms.iter_mut()
-                                .find(|r| r.lock().unwrap().id == id);
+                                })
+                                .unwrap_or(0);
+                            let room = rooms.iter_mut().find(|r| r.lock().unwrap().id == id);
                             if room.is_some() {
-                                room.unwrap().lock().unwrap().sender.as_ref().unwrap().send(raw_client);
+                                room.unwrap()
+                                    .lock()
+                                    .unwrap()
+                                    .sender
+                                    .as_ref()
+                                    .unwrap()
+                                    .send(raw_client);
                             }
                         }
-                        _ => eprintln!("Broken pipe")
+                        _ => eprintln!("Broken pipe"),
                     }
                 });
             }
@@ -192,7 +205,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn get_client_ip(socket_addr: &std::io::Result<SocketAddr>) -> [u8; 4] {
     match socket_addr {
         Ok(SocketAddr::V4(socket_addr)) => socket_addr.ip().octets(),
-        _ => [0; 4]
+        _ => [0; 4],
     }
 }
 

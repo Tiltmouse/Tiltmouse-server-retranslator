@@ -1,0 +1,28 @@
+os: windows
+
+language: rust
+
+rust:
+  - stable
+  - beta
+jobs:
+  fast_finish: true
+  
+cache: cargo
+script:
+  # do some more stuff here
+  - .travis/change.sh
+before_deploy:
+  - .travis/push.sh
+deploy:
+  provider: releases
+  file_glob: true
+  overwrite: true
+  file: target/release/server.zip
+  skip_cleanup: true
+  on:
+    all_branches: true
+    tags: false
+    repo: Tiltmouse/Tiltmouse-server-retranslator
+  api_key:
+    secure: $UPLOAD_KEY
