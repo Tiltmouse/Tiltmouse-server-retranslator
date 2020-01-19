@@ -34,7 +34,7 @@ impl Room {
             let rx = room.lock().unwrap().receiver.take().unwrap();
             let mut clients = Vec::<RoomClient>::new();
             loop {
-                while let Ok(new_client) = rx.try_recv() {
+                if let Ok(new_client) = rx.try_recv() {
                     clients.push(new_client);
                 }
                 let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
@@ -52,7 +52,7 @@ impl Room {
                         }
                     });
                 });
-                while let Some(msg) = rx.recv().await {
+                if let Some(msg) = rx.recv().await {
                     room.lock()
                         .unwrap()
                         .front
