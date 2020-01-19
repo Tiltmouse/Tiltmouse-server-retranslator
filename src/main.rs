@@ -30,38 +30,59 @@ impl Room {
             receiver: Some(rx),
         }));
         let room_clone = room.clone();
-        tokio::task::spawn(async move {
+        std::thread::spawn(move || {
             let room = room_clone;
-            let rx = room.lock().unwrap().receiver.take().unwrap();
+            let rxx = room.lock().unwrap().receiver.take().unwrap();
             let mut clients = Vec::<RoomClient>::new();
+            let (tx, mut rx) = channel::<Message>();
             loop {
-                if let Ok(new_client) = rx.try_recv() {
+                match room.lock().unwrap().front.as_mut().unwrap()
+                    .send_message(&Message::ping("ping".to_owned().into_bytes())) {
+                    Ok(res) => (),
+                    Err(e) => {
+                        eprintln!("client room renderer {:?}", e);
+                        break
+                    }
+                }
+                if let Ok(new_client) = rxx.try_recv() {
                     clients.push(new_client);
                 }
-                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
                 clients.drain(..).for_each(|mut client| {
                     let tx = tx.clone();
-                    tokio::task::spawn(async move {
+                    std::thread::spawn(move || {
                         loop {
+//                            match client.ws_client
+//                                .send_message(&Message::ping("ping".to_owned().into_bytes())) {
+//                                Ok(res) => (),
+//                                Err(e) => {
+//                                    eprintln!("client {:?}", e);
+//                                    break
+//                                }
+//                            }
                             let recv = client.ws_client.recv_message();
                             match recv {
                                 Ok(msg) if msg.is_data() => {
                                     info!("Receive msg from client: {:?}, body: {:?}", client.ip, msg);
-                                    tx.send(Message::from(msg)).unwrap();
+                                    let result = tx.send(Message::from(msg));
+                                    if result.is_err() { break; }
                                 }
                                 _ => break,
                             };
                         }
                     });
                 });
-                if let Some(msg) = rx.recv().await {
-                    room.lock()
+                if let Ok(msg) = rx.try_recv() {
+                    let result = room.lock()
                         .unwrap()
                         .front
                         .as_mut()
                         .unwrap()
-                        .send_message(&msg)
-                        .unwrap();
+                        .send_message(&msg);
+                    if result.is_err() {
+                        room.lock().unwrap().front.take();
+                        eprintln!("{:?}", result);
+                        break;
+                    }
                 }
             }
         });
@@ -108,7 +129,7 @@ async fn send_my_ip_to_all(port: i32, port_broadcast: u16) {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::builder().format_timestamp_millis().init();
     let mut rng = rand::prelude::thread_rng();
-    let mut port = 26199; //rng.gen_range(1i32, 65535i32);
+    let mut port = 32111; //rng.gen_range(1i32, 65535i32);
     let rooms = Arc::new(Mutex::new(Vec::<Arc<Mutex<Room>>>::new()));
     let mut server = loop {
         let server = websocket::server::sync::Server::bind(init_server_port(port));
@@ -135,6 +156,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let connections = tokio::task::spawn(async move {
         let rng = &mut rand::prelude::thread_rng();
         loop {
+            println!("connect wait");
             let client_upgrade = match server.accept() {
                 Ok(client) => client,
                 Err(err) => {
@@ -142,6 +164,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     continue;
                 }
             };
+            println!("connect accept {:?}", client_upgrade.origin());
             if client_upgrade.origin().is_some() {
                 let mut room_id = rng.gen_range(100usize, 300usize);
                 let mut room_guard = server_rooms.lock().unwrap();
@@ -150,15 +173,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     room_id = rng.gen_range(100usize, 300usize);
                     room = room_guard.iter().find(|e| e.lock().unwrap().id == room_id);
                 }
+                info!("Front connected {:?} {:?} with room {}", client_upgrade.origin(), client_upgrade.stream.peer_addr(), room_id);
                 let client = client_upgrade.accept();
                 if client.is_err() {
+                    info!("Front disconnected");
                     continue;
                 }
-                room_guard.push(Room::new(room_id, Some(client.unwrap())));
+                let mut browser = client.unwrap();
+                browser.send_message(&Message::text(&format!("0.0 {}", room_id)));
+                room_guard.push(Room::new(room_id, Some(browser)));
                 continue;
             }
             let client = client_upgrade.accept();
             if client.is_err() {
+                info!("Client disconnected");
                 continue;
             }
             let connected_client = client.unwrap();
@@ -172,30 +200,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     let clients = tokio::task::spawn(async move {
         loop {
-            if let (Ok(mut clients), Ok(mut rooms)) = (raw_clients.try_lock(), rooms.lock()) {
-                if rooms.is_empty() {
+            if let Ok(mut clients) = raw_clients.try_lock() {
+                if rooms.lock().unwrap().is_empty() {
                     continue;
                 }
                 clients.drain(..).for_each(|mut raw_client| {
                     match raw_client.ws_client.recv_message() {
-                        Ok(msg) if msg.is_data() => {
+                        Ok(msg) => if msg.is_data() {
                             let id = String::from_utf8(msg.take_payload())
                                 .map(|cmd| {
-                                    let room_id = cmd.split("room").next().unwrap_or("0");
-                                    usize::from_str(room_id).unwrap_or(0)
+                                    let room_id = cmd.split("room").collect::<String>();
+                                    usize::from_str(&room_id).unwrap_or(0)
                                 })
                                 .unwrap_or(0);
                             info!("Client {:?} want to connect in the room with id {}", raw_client.ip, id);
-                            let room = rooms.iter_mut().find(|r| r.lock().unwrap().id == id);
-                            if room.is_some() {
+                            let room_id = rooms.lock().unwrap().iter_mut().position(|r| r.lock().unwrap().id == id);
+                            if room_id.is_some() {
+                                let room = rooms.lock().unwrap().get(room_id.unwrap()).unwrap().clone();
+                                if room.lock().unwrap().front.is_none() {
+                                    rooms.lock().unwrap().remove(room_id.unwrap());
+                                }
                                 info!("Client {:?} connected to the room {}", raw_client.ip, id);
-                                room.unwrap()
-                                    .lock()
+                                room.lock()
                                     .unwrap()
                                     .sender
                                     .as_ref()
                                     .unwrap()
                                     .send(raw_client);
+                            } else {
+                                info!("Client rejected");
                             }
                         }
                         _ => eprintln!("Broken pipe"),
