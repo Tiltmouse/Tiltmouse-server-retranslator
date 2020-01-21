@@ -36,6 +36,7 @@ impl Room {
             let mut clients = Vec::<RoomClient>::new();
             let (tx, mut rx) = channel::<Message>();
             loop {
+                //todo ping from channel
                 match room.lock().unwrap().front.as_mut().unwrap()
                     .send_message(&Message::ping("ping".to_owned().into_bytes())) {
                     Ok(res) => (),
