@@ -99,6 +99,7 @@ struct RoomClient {
 async fn send_my_ip_to_all(port: i32, port_broadcast: u16) {
     let ip: std::io::Result<Vec<Interface>> = get_if_addrs::get_if_addrs();
 
+
     let mut bc_aip = ip
         .unwrap()
         .iter()
