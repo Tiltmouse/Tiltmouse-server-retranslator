@@ -16,7 +16,7 @@ script: cargo build --verbose --release;
 cache: cargo
 
 before_deploy:
-  - "if [[ -f target/release/server ]]; then mv target/release/watchdog \"target/release/server-$TRAVIS_TAG-$TRAVIS_OS_NAME\"; fi"
+  - "if [[ -f target/release/server ]]; then mv target/release/server-release \"target/release/server-$TRAVIS_TAG-$TRAVIS_OS_NAME\"; fi"
 
 deploy:
   provider: releases
